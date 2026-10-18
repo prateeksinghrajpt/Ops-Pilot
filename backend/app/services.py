@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 from .config import settings
 from .github_connector import GitHubConnectorError, collect_github_events
-from .models import Incident, Evidence, Investigation
+from .models import Incident, Evidence, Investigation, User
 from .simulator import build_scenario
 try:
     from ai_service.investigator import investigate
@@ -14,10 +14,10 @@ except ModuleNotFoundError:
 def now():
     return datetime.now(timezone.utc)
 
-def create_incident(db: Session, *, title, service_name, scenario, severity, summary="", signals=None, evidence_items=None):
+def create_incident(db: Session, *, user_id, title, service_name, scenario, severity, summary="", signals=None, evidence_items=None):
     incident_id = str(uuid4())
     incident = Incident(
-        id=incident_id, title=title, service_name=service_name, scenario=scenario,
+        id=incident_id, user_id=user_id, title=title, service_name=service_name, scenario=scenario,
         severity=severity, status="open", summary=summary, signals=signals or {},
         created_at=now(), updated_at=now()
     )
@@ -29,12 +29,12 @@ def create_incident(db: Session, *, title, service_name, scenario, severity, sum
             details=item.get("details", {}), timestamp=item.get("timestamp") or now()
         ))
     db.commit()
-    return get_incident(db, incident_id)
+    return get_incident(db, incident_id, user_id)
 
-def simulate_incident(db: Session, scenario: str, service_name: str, severity: str):
+def simulate_incident(db: Session, user_id: str, scenario: str, service_name: str, severity: str):
     data = build_scenario(scenario)
     incident = create_incident(
-        db, title=data["title"], service_name=service_name, scenario=scenario,
+        db, user_id=user_id, title=data["title"], service_name=service_name, scenario=scenario,
         severity=severity, summary=data["summary"], signals=data["signals"],
         evidence_items=data["evidence"]
     )
@@ -43,27 +43,28 @@ def simulate_incident(db: Session, scenario: str, service_name: str, severity: s
     incident._fallback_actions = data["fallback_actions"]
     return incident
 
-def list_incidents(db: Session, limit=50):
+def list_incidents(db: Session, user_id: str, limit=50):
     return list(db.scalars(
-        select(Incident).options(selectinload(Incident.evidence), selectinload(Incident.investigation))
+        select(Incident).options(selectinload(Incident.evidence), selectinload(Incident.investigation)).where(Incident.user_id == user_id)
         .order_by(Incident.created_at.desc()).limit(limit)
     ).all())
 
-def get_incident(db: Session, incident_id: str):
+def get_incident(db: Session, incident_id: str, user_id: str):
     return db.scalar(
         select(Incident).options(selectinload(Incident.evidence), selectinload(Incident.investigation))
-        .where(Incident.id == incident_id)
+        .where(Incident.id == incident_id, Incident.user_id == user_id)
     )
 
-def dashboard(db: Session):
-    total = db.scalar(select(func.count()).select_from(Incident)) or 0
-    open_count = db.scalar(select(func.count()).select_from(Incident).where(Incident.status == "open")) or 0
-    investigating = db.scalar(select(func.count()).select_from(Incident).where(Incident.status == "investigating")) or 0
-    critical = db.scalar(select(func.count()).select_from(Incident).where(Incident.severity == "critical", Incident.status != "resolved")) or 0
+def dashboard(db: Session, user_id: str):
+    scope = Incident.user_id == user_id
+    total = db.scalar(select(func.count()).select_from(Incident).where(scope)) or 0
+    open_count = db.scalar(select(func.count()).select_from(Incident).where(scope, Incident.status == "open")) or 0
+    investigating = db.scalar(select(func.count()).select_from(Incident).where(scope, Incident.status == "investigating")) or 0
+    critical = db.scalar(select(func.count()).select_from(Incident).where(scope, Incident.severity == "critical", Incident.status != "resolved")) or 0
     return {"total_incidents": total, "open_incidents": open_count, "investigating_incidents": investigating, "critical_active": critical}
 
-def collect_github_evidence(db: Session, incident_id: str):
-    incident = get_incident(db, incident_id)
+def collect_github_evidence(db: Session, incident_id: str, user_id: str):
+    incident = get_incident(db, incident_id, user_id)
     if not incident:
         return None
     if not settings.github_repo:
@@ -106,10 +107,10 @@ def collect_github_evidence(db: Session, incident_id: str):
         ))
     incident.updated_at = now()
     db.commit()
-    return get_incident(db, incident_id)
+    return get_incident(db, incident_id, user_id)
 
-def run_investigation(db: Session, incident_id: str):
-    incident = get_incident(db, incident_id)
+def run_investigation(db: Session, incident_id: str, user_id: str):
+    incident = get_incident(db, incident_id, user_id)
     if not incident:
         return None
     incident.status = "investigating"
@@ -157,10 +158,10 @@ def run_investigation(db: Session, incident_id: str):
     incident.status = "investigated"
     incident.updated_at = now()
     db.commit()
-    return get_incident(db, incident_id)
+    return get_incident(db, incident_id, user_id)
 
-def approve_remediation(db: Session, incident_id: str, approved_by: str, note: str):
-    incident = get_incident(db, incident_id)
+def approve_remediation(db: Session, incident_id: str, user_id: str, approved_by: str, note: str):
+    incident = get_incident(db, incident_id, user_id)
     if not incident or not incident.investigation:
         return None
     incident.investigation.remediation_approved = True
@@ -170,4 +171,17 @@ def approve_remediation(db: Session, incident_id: str, approved_by: str, note: s
     if note:
         incident.investigation.impact = f"{incident.investigation.impact}\nApproval recorded by {approved_by}: {note}"
     db.commit()
-    return get_incident(db, incident_id)
+    return get_incident(db, incident_id, user_id)
+
+def register_user(db: Session, email: str, password_hash: str):
+    user = User(id=str(uuid4()), email=email, password_hash=password_hash, created_at=now())
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+def get_user_by_email(db: Session, email: str):
+    return db.scalar(select(User).where(User.email == email))
+
+def get_user(db: Session, user_id: str):
+    return db.get(User, user_id)

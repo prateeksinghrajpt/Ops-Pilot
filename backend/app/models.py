@@ -9,6 +9,7 @@ def utcnow():
 class Incident(Base):
     __tablename__ = "incidents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     service_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     scenario: Mapped[str] = mapped_column(String(60), nullable=False)
@@ -20,6 +21,14 @@ class Incident(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     evidence: Mapped[list["Evidence"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
     investigation: Mapped["Investigation | None"] = relationship(back_populates="incident", cascade="all, delete-orphan", uselist=False)
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    incidents: Mapped[list["Incident"]] = relationship()
 
 class Evidence(Base):
     __tablename__ = "evidence"

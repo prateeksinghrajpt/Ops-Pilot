@@ -5,6 +5,21 @@ from pydantic import BaseModel, Field
 Scenario = Literal["http_5xx_spike", "database_latency", "memory_pressure", "deployment_regression"]
 Severity = Literal["low", "medium", "high", "critical"]
 
+class Credentials(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=12, max_length=128)
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+class AuthOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
 class SimulateIncidentRequest(BaseModel):
     scenario: Scenario = "http_5xx_spike"
     service_name: str = Field(default="checkout-service", min_length=2, max_length=120)
