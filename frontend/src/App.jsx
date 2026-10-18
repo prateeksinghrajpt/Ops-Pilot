@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, ArrowUpRight, Bot, CheckCircle2, ChevronRight, CircleDot, Clock3, Cpu, Database, FileSearch, Gauge, LoaderCircle, Plus, RefreshCw, ShieldCheck, Siren, Sparkles, X } from 'lucide-react'
-import { api } from './api'
+import { Activity, AlertTriangle, ArrowUpRight, Bot, CheckCircle2, ChevronRight, CircleDot, Clock3, Cpu, Database, FileSearch, Gauge, LoaderCircle, LogOut, Plus, RefreshCw, ShieldCheck, Siren, Sparkles, X } from 'lucide-react'
+import { api, clearAccessToken, getAccessToken } from './api'
+import AuthScreen from './AuthScreen'
 
 const scenarios = [
   { value: 'http_5xx_spike', label: 'HTTP 5xx error spike', detail: 'Elevated server errors and slow upstream dependency' },
@@ -31,6 +32,8 @@ function App() {
   const [service, setService] = useState('checkout-service')
   const [severity, setSeverity] = useState('high')
   const [toast, setToast] = useState('')
+  const [user, setUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
   const refresh = useCallback(async () => {
     try {
@@ -47,11 +50,26 @@ function App() {
     } finally { setLoading(false) }
   }, [selected?.id])
 
-  useEffect(() => { refresh() }, []) // initial load
   useEffect(() => {
+    if (!getAccessToken()) {
+      setAuthLoading(false)
+      return
+    }
+    api.me().then(setUser).catch(clearAccessToken).finally(() => setAuthLoading(false))
+  }, [])
+  useEffect(() => { if (user) refresh() }, [user])
+  useEffect(() => {
+    if (!user) return undefined
     const timer = setInterval(refresh, 15000)
     return () => clearInterval(timer)
-  }, [refresh])
+  }, [refresh, user])
+
+  const logout = () => {
+    clearAccessToken()
+    setUser(null)
+    setIncidents([])
+    setSelected(null)
+  }
 
   const openIncident = async (item) => {
     setSelected(item)
@@ -96,6 +114,9 @@ function App() {
   const current = selected || incidents[0] || null
   const criticalPercent = stats.total_incidents ? Math.round((stats.critical_active / stats.total_incidents) * 100) : 0
 
+  if (authLoading) return <div className="auth-loading"><LoaderCircle className="spin" size={24}/></div>
+  if (!user) return <AuthScreen onAuthenticated={setUser}/>
+
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Activity size={21}/></div><div><b>OpsPilot</b><span>INCIDENT INTELLIGENCE</span></div></div>
@@ -108,7 +129,7 @@ function App() {
       <div className="nav-label second">OPERATIONS</div>
       <button className="nav-item" onClick={() => setToast('Investigation history is available by selecting an incident.')}><Bot size={17}/> AI investigations</button>
       <button className="nav-item" onClick={() => setToast('Audit and settings pages are planned.')}><ShieldCheck size={17}/> Audit & approvals</button>
-      <div className="sidebar-bottom"><div className="online"><span/> API connection</div><div className="user-card"><div className="avatar">PS</div><div><b>Portfolio Demo</b><span>Local environment</span></div><CircleDot size={15}/></div></div>
+      <div className="sidebar-bottom"><div className="online"><span/> API connection</div><div className="user-card"><div className="avatar">{user.email.slice(0, 2).toUpperCase()}</div><div><b>{user.email}</b><span>Authenticated workspace</span></div><button className="logout-btn" title="Sign out" onClick={logout}><LogOut size={15}/></button></div></div>
     </aside>
 
     <main className="main">

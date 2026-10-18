@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     github_repo: str = ""
     github_token: str = ""
     github_lookback_hours: int = 24
+    auth_secret: str = "development-only-change-this-auth-secret-key"
+    auth_token_expire_minutes: int = 720
     cors_origins: str = "http://localhost:5173"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
