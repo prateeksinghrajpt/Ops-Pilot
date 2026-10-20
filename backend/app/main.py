@@ -9,9 +9,9 @@ from .config import settings
 from .database import Base, engine, get_db
 from .github_connector import GitHubConnectorError
 from . import models
-from .schemas import SimulateIncidentRequest, CreateIncidentRequest, IncidentOut, ApproveRequest, AuthOut, Credentials, UserOut
+from .schemas import SimulateIncidentRequest, CreateIncidentRequest, IncidentOut, ApproveRequest, AuthOut, Credentials, UserOut, AccessRequestOut, GrantAccessRequest
 from .security import create_access_token, get_current_user_id, hash_password, verify_password
-from .services import create_incident, simulate_incident, list_incidents, get_incident, dashboard, run_investigation, approve_remediation, collect_github_evidence, get_user, get_user_by_email, register_user
+from .services import create_incident, simulate_incident, list_incidents, get_incident, dashboard, run_investigation, approve_remediation, collect_github_evidence, get_user, get_user_by_email, register_user, request_access, list_access_requests, grant_access
 
 def ensure_runtime_schema():
     inspector = inspect(engine)
@@ -26,6 +26,9 @@ def ensure_runtime_schema():
     incident_columns = {column["name"] for column in inspector.get_columns("incidents")}
     if "user_id" not in incident_columns:
         statements.append("ALTER TABLE incidents ADD COLUMN user_id VARCHAR(36)")
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "access_uses_remaining" not in user_columns:
+        statements.append("ALTER TABLE users ADD COLUMN access_uses_remaining INTEGER NOT NULL DEFAULT 1")
     if statements:
         with engine.begin() as connection:
             for statement in statements:
@@ -58,8 +61,29 @@ def normalize_email(email: str) -> str:
         raise HTTPException(status_code=422, detail="Enter a valid email address")
     return normalized
 
+def is_admin(user) -> bool:
+    return user.email.lower() == settings.admin_email.strip().lower()
+
+def user_out(user):
+    return {"id": user.id, "email": user.email, "created_at": user.created_at,
+            "access_uses_remaining": user.access_uses_remaining, "is_admin": is_admin(user)}
+
 def auth_response(user):
-    return {"access_token": create_access_token(user.id), "token_type": "bearer", "user": user}
+    return {"access_token": create_access_token(user.id), "token_type": "bearer", "user": user_out(user)}
+
+def require_available_use(user_id: str, db: Session):
+    user = get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not is_admin(user) and user.access_uses_remaining < 1:
+        raise HTTPException(status_code=403, detail="Your free access has been used. Request access from the administrator.")
+    return user
+
+def require_admin(user_id: str, db: Session):
+    user = get_user(db, user_id)
+    if not user or not is_admin(user):
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return user
 
 @app.post("/api/v1/auth/signup", response_model=AuthOut, status_code=201, tags=["Authentication"])
 def signup(payload: Credentials, db: Session = Depends(get_db)):
@@ -80,7 +104,26 @@ def me(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db
     user = get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    return user
+    return user_out(user)
+
+@app.post("/api/v1/access-requests", response_model=AccessRequestOut, status_code=201, tags=["Access"])
+def create_access_request(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    if not get_user(db, user_id):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return request_access(db, user_id)
+
+@app.get("/api/v1/admin/access-requests", response_model=list[AccessRequestOut], tags=["Admin"])
+def get_access_requests(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_admin(user_id, db)
+    return list_access_requests(db)
+
+@app.post("/api/v1/admin/access-requests/{request_id}/grant", response_model=AccessRequestOut, tags=["Admin"])
+def grant_access_request(request_id: str, payload: GrantAccessRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_admin(user_id, db)
+    request = grant_access(db, request_id, payload.uses)
+    if not request:
+        raise HTTPException(status_code=404, detail="Pending access request not found")
+    return request
 
 @app.get("/api/v1/dashboard", tags=["Dashboard"])
 def get_dashboard(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
@@ -92,6 +135,7 @@ def get_incidents(limit: int = Query(default=50, ge=1, le=200), user_id: str = D
 
 @app.post("/api/v1/incidents", response_model=IncidentOut, status_code=201, tags=["Incidents"])
 def post_incident(payload: CreateIncidentRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_available_use(user_id, db)
     return create_incident(
         db, user_id=user_id, title=payload.title, service_name=payload.service_name,
         scenario=payload.scenario, severity=payload.severity, summary=payload.summary,
@@ -100,6 +144,7 @@ def post_incident(payload: CreateIncidentRequest, user_id: str = Depends(get_cur
 
 @app.post("/api/v1/incidents/simulate", response_model=IncidentOut, status_code=201, tags=["Incidents"])
 def simulate(payload: SimulateIncidentRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_available_use(user_id, db)
     return simulate_incident(db, user_id, payload.scenario, payload.service_name, payload.severity)
 
 @app.get("/api/v1/incidents/{incident_id}", response_model=IncidentOut, tags=["Incidents"])
@@ -111,13 +156,18 @@ def incident_detail(incident_id: str, user_id: str = Depends(get_current_user_id
 
 @app.post("/api/v1/incidents/{incident_id}/investigate", response_model=IncidentOut, tags=["Investigation"])
 def investigate_incident(incident_id: str, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    user = require_available_use(user_id, db)
     incident = run_investigation(db, incident_id, user_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if not is_admin(user):
+        user.access_uses_remaining -= 1
+        db.commit()
     return incident
 
 @app.post("/api/v1/incidents/{incident_id}/collect-github-evidence", response_model=IncidentOut, tags=["Evidence"])
 def collect_github(incident_id: str, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_available_use(user_id, db)
     try:
         incident = collect_github_evidence(db, incident_id, user_id)
     except GitHubConnectorError as exc:
@@ -128,6 +178,7 @@ def collect_github(incident_id: str, user_id: str = Depends(get_current_user_id)
 
 @app.post("/api/v1/incidents/{incident_id}/approve-remediation", response_model=IncidentOut, tags=["Approval"])
 def approve(incident_id: str, payload: ApproveRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_available_use(user_id, db)
     incident = approve_remediation(db, incident_id, user_id, payload.approved_by, payload.note)
     if not incident:
         raise HTTPException(status_code=400, detail="Incident or completed investigation not found")

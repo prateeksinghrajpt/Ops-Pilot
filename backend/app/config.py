@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     github_lookback_hours: int = 24
     auth_secret: str = "development-only-change-this-auth-secret-key"
     auth_token_expire_minutes: int = 720
+    admin_email: str = "rajputprateeksingh075@gmail.com"
     cors_origins: str = "http://localhost:5173"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

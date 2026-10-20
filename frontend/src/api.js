@@ -32,6 +32,7 @@ export const api = {
   signup: (payload) => request('/api/v1/auth/signup', { method: 'POST', body: JSON.stringify(payload) }),
   login: (payload) => request('/api/v1/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   me: () => request('/api/v1/auth/me'),
+  requestAccess: () => request('/api/v1/access-requests', { method: 'POST' }),
   dashboard: () => request('/api/v1/dashboard'),
   incidents: () => request('/api/v1/incidents?limit=100'),
   incident: (id) => request(`/api/v1/incidents/${id}`),

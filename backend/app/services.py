@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 from .config import settings
 from .github_connector import GitHubConnectorError, collect_github_events
-from .models import Incident, Evidence, Investigation, User
+from .models import Incident, Evidence, Investigation, User, AccessRequest
 from .simulator import build_scenario
 try:
     from ai_service.investigator import investigate
@@ -179,6 +179,34 @@ def register_user(db: Session, email: str, password_hash: str):
     db.commit()
     db.refresh(user)
     return user
+
+def request_access(db: Session, user_id: str):
+    pending = db.scalar(select(AccessRequest).where(
+        AccessRequest.user_id == user_id, AccessRequest.status == "pending"
+    ))
+    if pending:
+        return pending
+    request = AccessRequest(id=str(uuid4()), user_id=user_id, status="pending", created_at=now())
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+    return request
+
+def list_access_requests(db: Session):
+    return list(db.scalars(select(AccessRequest).order_by(AccessRequest.created_at.desc())).all())
+
+def grant_access(db: Session, request_id: str, uses: int):
+    request = db.get(AccessRequest, request_id)
+    if not request or request.status != "pending":
+        return None
+    user = db.get(User, request.user_id)
+    if not user:
+        return None
+    user.access_uses_remaining += uses
+    request.status = "approved"
+    request.resolved_at = now()
+    db.commit()
+    return request
 
 def get_user_by_email(db: Session, email: str):
     return db.scalar(select(User).where(User.email == email))
