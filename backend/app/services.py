@@ -193,7 +193,22 @@ def request_access(db: Session, user_id: str):
     return request
 
 def list_access_requests(db: Session):
-    return list(db.scalars(select(AccessRequest).order_by(AccessRequest.created_at.desc())).all())
+    rows = db.execute(
+        select(AccessRequest, User.email)
+        .join(User, User.id == AccessRequest.user_id)
+        .order_by(AccessRequest.created_at.desc())
+    ).all()
+    return [access_request_data(request, email) for request, email in rows]
+
+def access_request_data(request: AccessRequest, requester_email: str):
+    return {
+        "id": request.id,
+        "user_id": request.user_id,
+        "requester_email": requester_email,
+        "status": request.status,
+        "created_at": request.created_at,
+        "resolved_at": request.resolved_at,
+    }
 
 def grant_access(db: Session, request_id: str, uses: int):
     request = db.get(AccessRequest, request_id)
@@ -206,7 +221,19 @@ def grant_access(db: Session, request_id: str, uses: int):
     request.status = "approved"
     request.resolved_at = now()
     db.commit()
-    return request
+    return access_request_data(request, user.email)
+
+def reject_access(db: Session, request_id: str):
+    request = db.get(AccessRequest, request_id)
+    if not request or request.status != "pending":
+        return None
+    user = db.get(User, request.user_id)
+    if not user:
+        return None
+    request.status = "rejected"
+    request.resolved_at = now()
+    db.commit()
+    return access_request_data(request, user.email)
 
 def get_user_by_email(db: Session, email: str):
     return db.scalar(select(User).where(User.email == email))

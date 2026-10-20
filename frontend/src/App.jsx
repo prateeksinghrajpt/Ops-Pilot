@@ -34,12 +34,39 @@ function App() {
   const [toast, setToast] = useState('')
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const [adminView, setAdminView] = useState(false)
+  const [accessRequests, setAccessRequests] = useState([])
 
   const requestAccess = async () => {
     setBusy(true)
     try {
       await api.requestAccess()
       setToast('Access request sent to the administrator.')
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const loadAccessRequests = async () => {
+    setBusy(true)
+    try {
+      setAccessRequests(await api.accessRequests())
+      setError('')
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const openAdminDashboard = () => {
+    setAdminView(true)
+    loadAccessRequests()
+  }
+
+  const resolveAccessRequest = async (request, approved) => {
+    setBusy(true)
+    try {
+      if (approved) await api.grantAccess(request.id)
+      else await api.rejectAccess(request.id)
+      await loadAccessRequests()
+      setToast(approved ? `Granted one use to ${request.requester_email}.` : `Rejected ${request.requester_email}'s request.`)
     } catch (e) { setError(e.message) }
     finally { setBusy(false) }
   }
@@ -78,6 +105,7 @@ function App() {
     setUser(null)
     setIncidents([])
     setSelected(null)
+    setAdminView(false)
   }
 
   const openIncident = async (item) => {
@@ -132,23 +160,25 @@ function App() {
       <div className="brand"><div className="brand-mark"><Activity size={21}/></div><div><b>OpsPilot</b><span>INCIDENT INTELLIGENCE</span></div></div>
       <div className="workspace"><div className="workspace-icon">OC</div><div><b>Orbit Commerce</b><span>Engineering workspace</span></div><ChevronRight size={15}/></div>
       <div className="nav-label">WORKSPACE</div>
-      <button className="nav-item active"><Gauge size={17}/> Overview <span className="nav-dot"/></button>
+      <button className={`nav-item ${!adminView ? 'active' : ''}`} onClick={() => setAdminView(false)}><Gauge size={17}/> Overview <span className="nav-dot"/></button>
       <button className="nav-item" onClick={() => setSelected(null)}><Siren size={17}/> Incidents <span className="nav-count">{stats.open_incidents}</span></button>
       <button className="nav-item" onClick={() => setToast('Service map is a planned extension of this MVP.')}><Activity size={17}/> Service map</button>
       <button className="nav-item" onClick={() => setToast('Telemetry integrations are planned; current signals are simulated.')}><Database size={17}/> Telemetry sources</button>
       <div className="nav-label second">OPERATIONS</div>
       <button className="nav-item" onClick={() => setToast('Investigation history is available by selecting an incident.')}><Bot size={17}/> AI investigations</button>
       <button className="nav-item" onClick={() => setToast('Audit and settings pages are planned.')}><ShieldCheck size={17}/> Audit & approvals</button>
+      {user.is_admin && <><div className="nav-label second">ADMINISTRATION</div><button className={`nav-item ${adminView ? 'active' : ''}`} onClick={openAdminDashboard}><ShieldCheck size={17}/> Access requests</button></>}
       <div className="sidebar-bottom"><div className="online"><span/> API connection</div><div className="user-card"><div className="avatar">{user.email.slice(0, 2).toUpperCase()}</div><div><b>{user.email}</b><span>Authenticated workspace</span></div><button className="logout-btn" title="Sign out" onClick={logout}><LogOut size={15}/></button></div></div>
     </aside>
 
     <main className="main">
-      <header className="topbar"><div className="breadcrumbs">Workspace <ChevronRight size={14}/> <b>Overview</b></div><div className="top-actions"><span className="env-pill"><span/> SIMULATED ENVIRONMENT</span><button className="icon-btn" title="Refresh data" onClick={refresh}><RefreshCw size={17}/></button><button className="primary-btn" disabled={!user.is_admin && user.access_uses_remaining < 1} onClick={() => setModal(true)}><Plus size={17}/> Simulate incident</button></div></header>
+      <header className="topbar"><div className="breadcrumbs">Workspace <ChevronRight size={14}/> <b>{adminView ? 'Admin access requests' : 'Overview'}</b></div><div className="top-actions"><span className="env-pill"><span/> SIMULATED ENVIRONMENT</span>{adminView ? <button className="primary-btn" disabled={busy} onClick={loadAccessRequests}><RefreshCw size={17}/> Refresh requests</button> : <><button className="icon-btn" title="Refresh data" onClick={refresh}><RefreshCw size={17}/></button><button className="primary-btn" disabled={!user.is_admin && user.access_uses_remaining < 1} onClick={() => setModal(true)}><Plus size={17}/> Simulate incident</button></>}</div></header>
       <div className="content">
-        <div className="page-heading"><div><div className="eyebrow"><span className="pulse"/> LIVE OPERATIONS OVERVIEW</div><h1>Good evening, Engineer <span>✦</span></h1><p>Here’s what’s happening across your services right now.</p></div><div className="updated"><Clock3 size={14}/> Auto-refreshes every 15 seconds</div></div>
-
         {error && <div className="error-banner"><AlertTriangle size={17}/><span>{error}</span><button onClick={() => setError('')}><X size={16}/></button></div>}
         {toast && <div className="toast"><CheckCircle2 size={16}/><span>{toast}</span><button onClick={() => setToast('')}><X size={15}/></button></div>}
+        {adminView ? <AdminDashboard requests={accessRequests} busy={busy} onResolve={resolveAccessRequest}/> : <>
+        <div className="page-heading"><div><div className="eyebrow"><span className="pulse"/> LIVE OPERATIONS OVERVIEW</div><h1>Good evening, Engineer <span>✦</span></h1><p>Here’s what’s happening across your services right now.</p></div><div className="updated"><Clock3 size={14}/> Auto-refreshes every 15 seconds</div></div>
+
         {!user.is_admin && user.access_uses_remaining < 1 && <div className="error-banner"><AlertTriangle size={17}/><span>Your free access has been used. Request another use from the administrator.</span><button className="text-btn" disabled={busy} onClick={requestAccess}>Request access</button></div>}
 
         <section className="stat-grid">
@@ -188,6 +218,7 @@ function App() {
           </div>}
         </section>
         <footer><span><Activity size={14}/> OpsPilot <b>v1.0.0</b></span><span>Portfolio MVP · Simulated telemetry · Human approval required</span></footer>
+        </>}
       </div>
     </main>
 
@@ -197,6 +228,17 @@ function App() {
 
 function Stat({ icon, label, value, foot, tone }) {
   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-foot"><span className={`stat-foot-dot ${tone}`}/>{foot}</div><div className={`stat-glow ${tone}`}/></div>
+}
+
+function AdminDashboard({ requests, busy, onResolve }) {
+  const pending = requests.filter(request => request.status === 'pending')
+  return <>
+    <div className="page-heading"><div><div className="eyebrow"><span className="pulse"/> ADMINISTRATION</div><h1>Access requests</h1><p>Review requests and grant one additional app use when appropriate.</p></div><div className="updated"><ShieldCheck size={14}/> Admin-only area</div></div>
+    <section className="panel incident-panel">
+      <div className="panel-head"><div><h2>Pending requests</h2><p>{pending.length} request{pending.length === 1 ? '' : 's'} awaiting a decision</p></div></div>
+      {pending.length === 0 ? <div className="empty compact"><ShieldCheck size={27}/><p>No pending access requests.</p></div> : <div className="incident-list">{pending.map(request => <div className="incident-row" key={request.id}><div className="incident-icon medium"><ShieldCheck size={17}/></div><div className="incident-info"><div className="incident-title">{request.requester_email}<span className="severity medium">Pending</span></div><div className="incident-meta"><span>Requested {new Date(request.created_at).toLocaleString()}</span></div></div><div className="modal-actions"><button className="secondary-btn" disabled={busy} onClick={() => onResolve(request, false)}>Reject</button><button className="primary-btn" disabled={busy} onClick={() => onResolve(request, true)}>Grant 1 use</button></div></div>)}</div>}
+    </section>
+  </>
 }
 
 export default App
