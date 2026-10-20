@@ -81,6 +81,7 @@ class ApproveRequest(BaseModel):
 class AccessRequestOut(BaseModel):
     id: str
     user_id: str
+    requester_email: str
     status: str
     created_at: datetime
     resolved_at: datetime | None = None

@@ -11,7 +11,7 @@ from .github_connector import GitHubConnectorError
 from . import models
 from .schemas import SimulateIncidentRequest, CreateIncidentRequest, IncidentOut, ApproveRequest, AuthOut, Credentials, UserOut, AccessRequestOut, GrantAccessRequest
 from .security import create_access_token, get_current_user_id, hash_password, verify_password
-from .services import create_incident, simulate_incident, list_incidents, get_incident, dashboard, run_investigation, approve_remediation, collect_github_evidence, get_user, get_user_by_email, register_user, request_access, list_access_requests, grant_access
+from .services import create_incident, simulate_incident, list_incidents, get_incident, dashboard, run_investigation, approve_remediation, collect_github_evidence, get_user, get_user_by_email, register_user, request_access, list_access_requests, grant_access, reject_access, access_request_data
 
 def ensure_runtime_schema():
     inspector = inspect(engine)
@@ -108,9 +108,10 @@ def me(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db
 
 @app.post("/api/v1/access-requests", response_model=AccessRequestOut, status_code=201, tags=["Access"])
 def create_access_request(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    if not get_user(db, user_id):
+    user = get_user(db, user_id)
+    if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    return request_access(db, user_id)
+    return access_request_data(request_access(db, user_id), user.email)
 
 @app.get("/api/v1/admin/access-requests", response_model=list[AccessRequestOut], tags=["Admin"])
 def get_access_requests(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
@@ -121,6 +122,14 @@ def get_access_requests(user_id: str = Depends(get_current_user_id), db: Session
 def grant_access_request(request_id: str, payload: GrantAccessRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     require_admin(user_id, db)
     request = grant_access(db, request_id, payload.uses)
+    if not request:
+        raise HTTPException(status_code=404, detail="Pending access request not found")
+    return request
+
+@app.post("/api/v1/admin/access-requests/{request_id}/reject", response_model=AccessRequestOut, tags=["Admin"])
+def reject_access_request(request_id: str, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    require_admin(user_id, db)
+    request = reject_access(db, request_id)
     if not request:
         raise HTTPException(status_code=404, detail="Pending access request not found")
     return request
