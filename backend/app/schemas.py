@@ -13,6 +13,8 @@ class UserOut(BaseModel):
     id: str
     email: str
     created_at: datetime
+    access_uses_remaining: int
+    is_admin: bool = False
     model_config = {"from_attributes": True}
 
 class AuthOut(BaseModel):
@@ -75,3 +77,14 @@ class IncidentOut(BaseModel):
 class ApproveRequest(BaseModel):
     approved_by: str = Field(default="local-engineer", min_length=2, max_length=120)
     note: str = Field(default="", max_length=1000)
+
+class AccessRequestOut(BaseModel):
+    id: str
+    user_id: str
+    status: str
+    created_at: datetime
+    resolved_at: datetime | None = None
+    model_config = {"from_attributes": True}
+
+class GrantAccessRequest(BaseModel):
+    uses: int = Field(default=1, ge=1, le=100)

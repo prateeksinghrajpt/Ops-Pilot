@@ -35,6 +35,15 @@ function App() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
 
+  const requestAccess = async () => {
+    setBusy(true)
+    try {
+      await api.requestAccess()
+      setToast('Access request sent to the administrator.')
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
   const refresh = useCallback(async () => {
     try {
       const [summary, rows] = await Promise.all([api.dashboard(), api.incidents()])
@@ -94,6 +103,7 @@ function App() {
     try {
       const updated = await api.investigate(id)
       setSelected(updated)
+      setUser(await api.me())
       setToast('Investigation completed.')
       await refresh()
     } catch (e) { setError(e.message) }
@@ -133,12 +143,13 @@ function App() {
     </aside>
 
     <main className="main">
-      <header className="topbar"><div className="breadcrumbs">Workspace <ChevronRight size={14}/> <b>Overview</b></div><div className="top-actions"><span className="env-pill"><span/> SIMULATED ENVIRONMENT</span><button className="icon-btn" title="Refresh data" onClick={refresh}><RefreshCw size={17}/></button><button className="primary-btn" onClick={() => setModal(true)}><Plus size={17}/> Simulate incident</button></div></header>
+      <header className="topbar"><div className="breadcrumbs">Workspace <ChevronRight size={14}/> <b>Overview</b></div><div className="top-actions"><span className="env-pill"><span/> SIMULATED ENVIRONMENT</span><button className="icon-btn" title="Refresh data" onClick={refresh}><RefreshCw size={17}/></button><button className="primary-btn" disabled={!user.is_admin && user.access_uses_remaining < 1} onClick={() => setModal(true)}><Plus size={17}/> Simulate incident</button></div></header>
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow"><span className="pulse"/> LIVE OPERATIONS OVERVIEW</div><h1>Good evening, Engineer <span>✦</span></h1><p>Here’s what’s happening across your services right now.</p></div><div className="updated"><Clock3 size={14}/> Auto-refreshes every 15 seconds</div></div>
 
         {error && <div className="error-banner"><AlertTriangle size={17}/><span>{error}</span><button onClick={() => setError('')}><X size={16}/></button></div>}
         {toast && <div className="toast"><CheckCircle2 size={16}/><span>{toast}</span><button onClick={() => setToast('')}><X size={15}/></button></div>}
+        {!user.is_admin && user.access_uses_remaining < 1 && <div className="error-banner"><AlertTriangle size={17}/><span>Your free access has been used. Request another use from the administrator.</span><button className="text-btn" disabled={busy} onClick={requestAccess}>Request access</button></div>}
 
         <section className="stat-grid">
           <Stat icon={<Siren/>} label="Total incidents" value={stats.total_incidents} foot="Across all simulated services" tone="blue"/>
